@@ -8,9 +8,17 @@ import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { User } from './users/user.entity';
 import { JobPosition } from './job-positions/job-position.entity';
+import { JobPositionsModule } from './job-positions/job-positions.module';
 import { Candidate } from './candidates/candidate.entity';
+import { CandidatesModule } from './candidates/candidates.module';
 import { EmailMetadata } from './email-metadata/email-metadata.entity';
+import { EmailMetadataModule } from './email-metadata/email-metadata.module';
 import { CVAnalysis } from './cv-analysis/cv-analysis.entity';
+import { GoogleAuthModule } from './google-auth/google-auth.module';
+import { GmailModule } from './gmail/gmail.module';
+import { GmailWebhookModule } from './gmail-webhook/gmail-webhook.module';
+import { PdfParserModule } from './pdf-parser/pdf-parser.module';
+import { GeminiModule } from './gemini/gemini.module';
 
 @Module({
   imports: [
@@ -32,6 +40,14 @@ import { CVAnalysis } from './cv-analysis/cv-analysis.entity';
     }),
     AuthModule,
     UsersModule,
+    JobPositionsModule,
+    CandidatesModule,
+    EmailMetadataModule,
+    GoogleAuthModule,
+    GmailModule,
+    GmailWebhookModule,
+    PdfParserModule,
+    GeminiModule,
   ],
   controllers: [AppController],
   providers: [AppService],

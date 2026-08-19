@@ -7,6 +7,7 @@ import {
 
 export enum EmailStatus {
   PENDING = 'PENDING',
+  PENDING_CV_ANALYSIS = 'PENDING_CV_ANALYSIS',
   PROCESSED = 'PROCESSED',
   FAILED = 'FAILED',
   IGNORED = 'IGNORED',

@@ -28,6 +28,12 @@ export class User {
   @Column({ type: 'varchar', nullable: true })
   googleRefreshToken: string | null;
 
+  @Column({ type: 'varchar', nullable: true })
+  gmailAddress: string | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  gmailHistoryId: string | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

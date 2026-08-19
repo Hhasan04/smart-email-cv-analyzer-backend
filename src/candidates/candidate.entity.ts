@@ -26,12 +26,12 @@ export class Candidate {
   @Column({ type: 'text', nullable: true })
   parsedCvText: string | null;
 
-  @Column()
-  jobPositionId: string;
+  @Column({ type: 'varchar', nullable: true })
+  jobPositionId: string | null;
 
-  @ManyToOne(() => JobPosition, { onDelete: 'CASCADE' })
+  @ManyToOne(() => JobPosition, { onDelete: 'SET NULL', nullable: true })
   @JoinColumn({ name: 'jobPositionId' })
-  jobPosition: JobPosition;
+  jobPosition: JobPosition | null;
 
   @CreateDateColumn()
   createdAt: Date;

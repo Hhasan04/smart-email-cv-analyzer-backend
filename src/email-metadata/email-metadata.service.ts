@@ -10,6 +10,7 @@ export interface CreateEmailMetadata {
   bodyText: string;
   receivedAt: Date;
   status: EmailStatus;
+  candidateId: string;
 }
 
 @Injectable()

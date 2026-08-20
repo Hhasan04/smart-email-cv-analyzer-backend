@@ -7,10 +7,26 @@ const matchResultSchema = z.object({
   jobPositionId: z.string().nullable(),
 });
 
+const scoreResultSchema = z.object({
+  matchScore: z.number().min(0).max(100),
+  matchingSkills: z.array(z.string()),
+  missingSkills: z.array(z.string()),
+  summaryText: z.string(),
+});
+
 export interface JobPositionOption {
   id: string;
   title: string;
 }
+
+export interface ScoringJobPosition {
+  title: string;
+  description: string;
+  requiredSkills: string[];
+  preferredSkills: string[];
+}
+
+export type ScoreResult = z.infer<typeof scoreResultSchema>;
 
 @Injectable()
 export class GeminiService {
@@ -31,7 +47,7 @@ export class GeminiService {
       return null;
     }
 
-    const model = this.client.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const model = this.client.getGenerativeModel({ model: 'gemini-3.6-flash' });
     const jobPositionsList = jobPositions
       .map((p) => `- id: ${p.id}, title: "${p.title}"`)
       .join('\n');
@@ -49,8 +65,16 @@ ${email.body}
 Respond with ONLY a JSON object, no markdown fences, no explanation, in exactly this shape:
 {"jobPositionId": "<id from the list above>" or null if no listed position clearly matches}`;
 
-    const result = await model.generateContent(prompt);
-    const raw = result.response.text().trim();
+    let raw: string;
+    try {
+      const result = await model.generateContent(prompt);
+      raw = result.response.text().trim();
+    } catch (error) {
+      this.logger.warn(
+        `Gemini job-match call failed: ${(error as Error).message}`,
+      );
+      return null;
+    }
 
     try {
       const parsed = matchResultSchema.parse(JSON.parse(stripCodeFence(raw)));
@@ -63,8 +87,49 @@ Respond with ONLY a JSON object, no markdown fences, no explanation, in exactly 
       return parsed.jobPositionId;
     } catch (error) {
       this.logger.warn(
-        `Failed to parse Gemini job-match response: ${raw}`,
-        error as Error,
+        `Failed to parse Gemini job-match response (${(error as Error).message}): ${raw}`,
+      );
+      return null;
+    }
+  }
+
+  async scoreCandidate(
+    cvText: string,
+    jobPosition: ScoringJobPosition,
+  ): Promise<ScoreResult | null> {
+    const model = this.client.getGenerativeModel({ model: 'gemini-3.6-flash' });
+
+    const prompt = `You are helping a recruiter evaluate a candidate's CV against a specific job opening.
+
+Job title: ${jobPosition.title}
+Job description: ${jobPosition.description}
+Required skills: ${jobPosition.requiredSkills.join(', ') || 'none listed'}
+Preferred skills: ${jobPosition.preferredSkills.join(', ') || 'none listed'}
+
+Candidate CV text:
+${cvText}
+
+Score how well this CV matches the job (0-100), list which required/preferred skills the CV demonstrates and which are missing, and write a short 2-3 sentence recruiter-facing summary.
+
+Respond with ONLY a JSON object, no markdown fences, no explanation, in exactly this shape:
+{"matchScore": <number 0-100>, "matchingSkills": ["..."], "missingSkills": ["..."], "summaryText": "..."}`;
+
+    let raw: string;
+    try {
+      const result = await model.generateContent(prompt);
+      raw = result.response.text().trim();
+    } catch (error) {
+      this.logger.warn(
+        `Gemini scoring call failed: ${(error as Error).message}`,
+      );
+      return null;
+    }
+
+    try {
+      return scoreResultSchema.parse(JSON.parse(stripCodeFence(raw)));
+    } catch (error) {
+      this.logger.warn(
+        `Failed to parse Gemini scoring response (${(error as Error).message}): ${raw}`,
       );
       return null;
     }

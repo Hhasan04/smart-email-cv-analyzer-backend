@@ -3,6 +3,7 @@ import {
   Controller,
   HttpCode,
   HttpStatus,
+  Logger,
   Post,
   Query,
   UnauthorizedException,
@@ -13,6 +14,8 @@ import type { PubSubPushDto } from './pubsub-push.dto';
 
 @Controller('webhooks')
 export class GmailWebhookController {
+  private readonly logger = new Logger(GmailWebhookController.name);
+
   constructor(
     private readonly gmailWebhookService: GmailWebhookService,
     private readonly configService: ConfigService,
@@ -20,10 +23,10 @@ export class GmailWebhookController {
 
   @Post('gmail')
   @HttpCode(HttpStatus.OK)
-  async handle(
+  handle(
     @Body() body: PubSubPushDto,
     @Query('token') token: string | undefined,
-  ): Promise<void> {
+  ): void {
     const expectedToken = this.configService.getOrThrow<string>(
       'PUBSUB_VERIFICATION_TOKEN',
     );
@@ -31,6 +34,15 @@ export class GmailWebhookController {
       throw new UnauthorizedException('Invalid Pub/Sub verification token');
     }
 
-    await this.gmailWebhookService.processNotification(body);
+    // Ack Pub/Sub immediately and process in the background. Waiting on the full
+    // pipeline (Gemini calls can be slow/rate-limited) risks exceeding Pub/Sub's
+    // ack deadline, which causes it to redeliver the same notification and
+    // process everything twice.
+    this.gmailWebhookService.processNotification(body).catch((error: Error) => {
+      this.logger.error(
+        `Unhandled error processing Pub/Sub notification: ${error.message}`,
+        error.stack,
+      );
+    });
   }
 }

@@ -32,20 +32,27 @@ export class GmailService {
     gmail: gmail_v1.Gmail,
     startHistoryId: string,
   ): Promise<string[]> {
-    const response = await gmail.users.history.list({
-      userId: 'me',
-      startHistoryId,
-      historyTypes: ['messageAdded'],
-    });
-
     const ids = new Set<string>();
-    for (const record of response.data.history ?? []) {
-      for (const added of record.messagesAdded ?? []) {
-        if (added.message?.id) {
-          ids.add(added.message.id);
+    let pageToken: string | undefined;
+
+    do {
+      const response = await gmail.users.history.list({
+        userId: 'me',
+        startHistoryId,
+        pageToken,
+      });
+
+      for (const record of response.data.history ?? []) {
+        for (const added of record.messagesAdded ?? []) {
+          if (added.message?.id) {
+            ids.add(added.message.id);
+          }
         }
       }
-    }
+
+      pageToken = response.data.nextPageToken ?? undefined;
+    } while (pageToken);
+
     return [...ids];
   }
 

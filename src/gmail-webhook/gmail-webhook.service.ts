@@ -17,11 +17,13 @@ import { PdfParserService } from '../pdf-parser/pdf-parser.service';
 import { CandidatesService } from '../candidates/candidates.service';
 import { EmailMetadataService } from '../email-metadata/email-metadata.service';
 import { EmailStatus } from '../email-metadata/email-metadata.entity';
+import { CvAnalysisService } from '../cv-analysis/cv-analysis.service';
 import { PubSubPushDto, GmailNotificationData } from './pubsub-push.dto';
 
 @Injectable()
 export class GmailWebhookService {
   private readonly logger = new Logger(GmailWebhookService.name);
+  private readonly messagesInFlight = new Set<string>();
 
   constructor(
     private readonly gmailService: GmailService,
@@ -31,6 +33,7 @@ export class GmailWebhookService {
     private readonly pdfParserService: PdfParserService,
     private readonly candidatesService: CandidatesService,
     private readonly emailMetadataService: EmailMetadataService,
+    private readonly cvAnalysisService: CvAnalysisService,
   ) {}
 
   async processNotification(dto: PubSubPushDto): Promise<void> {
@@ -49,6 +52,9 @@ export class GmailWebhookService {
     const newHistoryId = String(notification.historyId);
 
     if (!user.gmailHistoryId) {
+      this.logger.log(
+        `First Pub/Sub notification for ${user.gmailAddress} — recording baseline historyId ${newHistoryId}, no messages processed this round.`,
+      );
       await this.usersService.saveGmailHistoryId(user.id, newHistoryId);
       return;
     }
@@ -59,13 +65,18 @@ export class GmailWebhookService {
       user.gmailHistoryId,
     );
 
+    this.logger.log(
+      `${messageIds.length} new message(s) for ${user.gmailAddress} since historyId ${user.gmailHistoryId}`,
+    );
+
     for (const messageId of messageIds) {
       try {
         await this.processMessage(gmail, user, messageId);
       } catch (error) {
+        const err = error as Error;
         this.logger.error(
-          `Failed to process Gmail message ${messageId}`,
-          error as Error,
+          `Failed to process Gmail message ${messageId}: ${err.message}`,
+          err.stack,
         );
       }
     }
@@ -83,38 +94,61 @@ export class GmailWebhookService {
     user: User,
     messageId: string,
   ): Promise<void> {
-    const alreadyProcessed =
-      await this.emailMetadataService.findByMessageId(messageId);
-    if (alreadyProcessed) {
+    if (this.messagesInFlight.has(messageId)) {
+      this.logger.log(
+        `Message ${messageId} is already being processed — skipping concurrent duplicate.`,
+      );
       return;
     }
+    this.messagesInFlight.add(messageId);
 
-    const message = await this.gmailService.getMessage(gmail, messageId);
-    const pdfAttachments = findPdfAttachments(message);
-
-    if (pdfAttachments.length > 0) {
-      await this.handleCvSubmission(gmail, message, pdfAttachments, message);
-      return;
-    }
-
-    if (message.threadId && message.threadId !== message.id) {
-      const threadMessages = await this.gmailService.getThreadMessages(
-        gmail,
-        message.threadId,
-      );
-      const cvMessage = threadMessages.find(
-        (m) => m.id !== message.id && findPdfAttachments(m).length > 0,
-      );
-
-      if (cvMessage) {
-        const pdfAttachmentsOnCvMessage = findPdfAttachments(cvMessage);
-        await this.handleCvSubmission(
-          gmail,
-          cvMessage,
-          pdfAttachmentsOnCvMessage,
-          message,
-        );
+    try {
+      const alreadyProcessed =
+        await this.emailMetadataService.findByMessageId(messageId);
+      if (alreadyProcessed) {
+        return;
       }
+
+      const message = await this.gmailService.getMessage(gmail, messageId);
+      const pdfAttachments = findPdfAttachments(message);
+
+      if (pdfAttachments.length > 0) {
+        this.logger.log(
+          `Message ${messageId} has a PDF attachment — treating as a CV submission.`,
+        );
+        await this.handleCvSubmission(gmail, message, pdfAttachments, message);
+        return;
+      }
+
+      if (message.threadId && message.threadId !== message.id) {
+        const threadMessages = await this.gmailService.getThreadMessages(
+          gmail,
+          message.threadId,
+        );
+        const cvMessage = threadMessages.find(
+          (m) => m.id !== message.id && findPdfAttachments(m).length > 0,
+        );
+
+        if (cvMessage) {
+          this.logger.log(
+            `Message ${messageId} is a reply in a thread with an earlier CV attachment (message ${cvMessage.id}) — treating as a job-position clarification.`,
+          );
+          const pdfAttachmentsOnCvMessage = findPdfAttachments(cvMessage);
+          await this.handleCvSubmission(
+            gmail,
+            cvMessage,
+            pdfAttachmentsOnCvMessage,
+            message,
+          );
+          return;
+        }
+      }
+
+      this.logger.log(
+        `Message ${messageId} has no attachment and no CV in its thread — ignoring.`,
+      );
+    } finally {
+      this.messagesInFlight.delete(messageId);
     }
   }
 
@@ -128,12 +162,28 @@ export class GmailWebhookService {
     const subject = getHeader(classificationSourceMessage, 'Subject') ?? '';
     const body = extractPlainTextBody(classificationSourceMessage);
 
+    this.logger.log(
+      `Matching against ${jobPositions.length} active job position(s): ${jobPositions.map((p) => p.title).join(', ') || 'none'}`,
+    );
+
     const jobPositionId = await this.geminiService.matchJobPosition(
       jobPositions.map((p) => ({ id: p.id, title: p.title })),
       { subject, body },
     );
 
     if (!jobPositionId) {
+      if (
+        await this.alreadyRepliedInThread(gmail, classificationSourceMessage)
+      ) {
+        this.logger.log(
+          'Already sent a clarification reply on this thread — skipping duplicate send.',
+        );
+        return;
+      }
+
+      this.logger.log(
+        'Gemini could not match this email to an active job position — sending clarification reply.',
+      );
       await this.gmailService.sendReply(
         gmail,
         classificationSourceMessage,
@@ -141,6 +191,15 @@ export class GmailWebhookService {
       );
       return;
     }
+
+    const jobPosition = jobPositions.find((p) => p.id === jobPositionId);
+    if (!jobPosition) {
+      return;
+    }
+
+    this.logger.log(
+      `Matched job position "${jobPosition.title}" — parsing CV and scoring.`,
+    );
 
     const fromHeader = getHeader(cvMessage, 'From') ?? '';
     const senderEmail = extractSenderEmail(fromHeader);
@@ -154,23 +213,66 @@ export class GmailWebhookService {
     const parsedCvText =
       await this.pdfParserService.extractText(attachmentBuffer);
 
-    await this.candidatesService.upsertFromCvSubmission({
+    const candidate = await this.candidatesService.upsertFromCvSubmission({
       fullName,
       email: senderEmail,
       jobPositionId,
       parsedCvText,
+      resumeFile: attachmentBuffer,
+      resumeFileName: pdfAttachments[0].filename,
     });
+
+    const scoreResult = await this.geminiService.scoreCandidate(parsedCvText, {
+      title: jobPosition.title,
+      description: jobPosition.description,
+      requiredSkills: jobPosition.requiredSkills,
+      preferredSkills: jobPosition.preferredSkills,
+    });
+
+    if (scoreResult) {
+      this.logger.log(
+        `Scored candidate ${candidate.id}: ${scoreResult.matchScore}% match.`,
+      );
+      await this.cvAnalysisService.create({
+        candidateId: candidate.id,
+        matchScore: scoreResult.matchScore,
+        matchingSkills: scoreResult.matchingSkills,
+        missingSkills: scoreResult.missingSkills,
+        summaryText: scoreResult.summaryText,
+      });
+    } else {
+      this.logger.warn(
+        `Gemini scoring failed or returned an unparseable response for candidate ${candidate.id} — saved without a score.`,
+      );
+    }
 
     await this.emailMetadataService.create({
       messageId: cvMessage.id ?? '',
+      candidateId: candidate.id,
       senderEmail,
       subject: getHeader(cvMessage, 'Subject') ?? '',
       bodyText: extractPlainTextBody(cvMessage),
       receivedAt: cvMessage.internalDate
         ? new Date(Number(cvMessage.internalDate))
         : new Date(),
-      status: EmailStatus.PENDING_CV_ANALYSIS,
+      status: scoreResult
+        ? EmailStatus.PROCESSED
+        : EmailStatus.PENDING_CV_ANALYSIS,
     });
+  }
+
+  private async alreadyRepliedInThread(
+    gmail: gmail_v1.Gmail,
+    message: gmail_v1.Schema$Message,
+  ): Promise<boolean> {
+    if (!message.threadId) {
+      return false;
+    }
+    const threadMessages = await this.gmailService.getThreadMessages(
+      gmail,
+      message.threadId,
+    );
+    return threadMessages.some((m) => m.labelIds?.includes('SENT'));
   }
 
   private buildClarificationReplyBody(jobTitles: string[]): string {

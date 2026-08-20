@@ -2,7 +2,10 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { google } from 'googleapis';
 
-const GMAIL_READONLY_SCOPE = 'https://www.googleapis.com/auth/gmail.readonly';
+const GMAIL_SCOPES = [
+  'https://www.googleapis.com/auth/gmail.readonly',
+  'https://www.googleapis.com/auth/gmail.send',
+];
 
 export interface GoogleLinkResult {
   refreshToken: string;
@@ -18,7 +21,7 @@ export class GoogleAuthService {
     return client.generateAuthUrl({
       access_type: 'offline',
       prompt: 'consent',
-      scope: [GMAIL_READONLY_SCOPE],
+      scope: GMAIL_SCOPES,
       state,
     });
   }

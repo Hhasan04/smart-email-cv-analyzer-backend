@@ -43,14 +43,17 @@ export class GoogleAuthController {
 
   @UseGuards(JwtAuthGuard)
   @Get('status')
-  async getStatus(
-    @Req() req: Request,
-  ): Promise<{ connected: boolean; gmailAddress: string | null }> {
+  async getStatus(@Req() req: Request): Promise<{
+    connected: boolean;
+    gmailAddress: string | null;
+    watching: boolean;
+  }> {
     const authenticatedUser = req.user as AuthenticatedUser;
     const user = await this.usersService.findById(authenticatedUser.id);
     return {
       connected: !!user?.googleRefreshToken,
       gmailAddress: user?.gmailAddress ?? null,
+      watching: !!user?.gmailHistoryId,
     };
   }
 
@@ -84,7 +87,11 @@ export class GoogleAuthController {
 
       res.redirect(`${callbackUrl}?status=success`);
     } catch (err) {
-      this.logger.error('Google OAuth callback failed', err as Error);
+      const error = err as Error;
+      this.logger.error(
+        `Google OAuth callback failed: ${error.message}`,
+        error.stack,
+      );
       res.redirect(`${callbackUrl}?status=error`);
     }
   }

@@ -2,8 +2,11 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  JoinColumn,
+  ManyToOne,
   PrimaryGeneratedColumn,
 } from 'typeorm';
+import { Candidate } from '../candidates/candidate.entity';
 
 export enum EmailStatus {
   PENDING = 'PENDING',
@@ -35,6 +38,13 @@ export class EmailMetadata {
 
   @Column({ type: 'enum', enum: EmailStatus, default: EmailStatus.PENDING })
   status!: EmailStatus;
+
+  @Column({ type: 'varchar', nullable: true })
+  candidateId!: string | null;
+
+  @ManyToOne(() => Candidate, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({ name: 'candidateId' })
+  candidate!: Candidate | null;
 
   @CreateDateColumn()
   createdAt!: Date;

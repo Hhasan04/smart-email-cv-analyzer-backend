@@ -1,8 +1,18 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Candidate } from './candidate.entity';
+import type { gmail_v1 } from 'googleapis';
+import { Candidate, CandidateStatus } from './candidate.entity';
 import { QueryCandidatesDto } from './dto/query-candidates.dto';
+import { JobPositionsService } from '../job-positions/job-positions.service';
+import { GeminiService } from '../gemini/gemini.service';
+import { CvAnalysisService } from '../cv-analysis/cv-analysis.service';
+import { UsersService } from '../users/users.service';
+import { GmailService } from '../gmail/gmail.service';
 
 export interface UpsertCvSubmission {
   fullName: string;
@@ -25,11 +35,21 @@ export interface PaginatedCandidates {
   limit: number;
 }
 
+export interface BulkRejectResult {
+  sent: string[];
+  failed: string[];
+}
+
 @Injectable()
 export class CandidatesService {
   constructor(
     @InjectRepository(Candidate)
     private readonly candidatesRepository: Repository<Candidate>,
+    private readonly jobPositionsService: JobPositionsService,
+    private readonly geminiService: GeminiService,
+    private readonly cvAnalysisService: CvAnalysisService,
+    private readonly usersService: UsersService,
+    private readonly gmailService: GmailService,
   ) {}
 
   async upsertFromCvSubmission(
@@ -133,5 +153,127 @@ export class CandidatesService {
     if (result.affected === 0) {
       throw new NotFoundException('Candidate not found');
     }
+  }
+
+  async updateStatus(id: string, status: CandidateStatus): Promise<Candidate> {
+    const candidate = await this.findByIdOrThrow(id);
+    candidate.status = status;
+    return this.candidatesRepository.save(candidate);
+  }
+
+  async reevaluate(
+    candidateId: string,
+    targetJobPositionId: string,
+  ): Promise<Candidate> {
+    const source = await this.findByIdOrThrow(candidateId);
+    if (!source.parsedCvText) {
+      throw new BadRequestException(
+        'Candidate has no parsed CV text to re-evaluate.',
+      );
+    }
+
+    const resume = await this.getResumeFile(candidateId);
+    if (!resume) {
+      throw new BadRequestException(
+        'Candidate has no stored resume file to re-evaluate.',
+      );
+    }
+
+    const targetJobPosition =
+      await this.jobPositionsService.findByIdOrThrow(targetJobPositionId);
+
+    const scoreResult = await this.geminiService.scoreCandidate(
+      source.parsedCvText,
+      {
+        title: targetJobPosition.title,
+        description: targetJobPosition.description,
+        requiredSkills: targetJobPosition.requiredSkills,
+        preferredSkills: targetJobPosition.preferredSkills,
+        skillsWeight: targetJobPosition.skillsWeight,
+        experienceWeight: targetJobPosition.experienceWeight,
+        educationWeight: targetJobPosition.educationWeight,
+        customPromptTemplate: targetJobPosition.customPromptTemplate,
+      },
+    );
+
+    if (!scoreResult) {
+      throw new BadRequestException(
+        'Gemini could not score this candidate against the target job position. Please try again.',
+      );
+    }
+
+    const candidate = await this.upsertFromCvSubmission({
+      fullName: source.fullName,
+      email: source.email,
+      jobPositionId: targetJobPositionId,
+      parsedCvText: source.parsedCvText,
+      resumeFile: resume.buffer,
+      resumeFileName: resume.filename,
+    });
+
+    await this.cvAnalysisService.create({
+      candidateId: candidate.id,
+      matchScore: scoreResult.matchScore,
+      matchingSkills: scoreResult.matchingSkills,
+      missingSkills: scoreResult.missingSkills,
+      summaryText: scoreResult.summaryText,
+      scoreBreakdown: scoreResult.scoreBreakdown ?? null,
+    });
+
+    return this.findByIdOrThrow(candidate.id);
+  }
+
+  async sendEmail(
+    candidateId: string,
+    senderUserId: string,
+    subject: string,
+    body: string,
+  ): Promise<void> {
+    const candidate = await this.findByIdOrThrow(candidateId);
+    const gmail = await this.buildSenderGmailClient(senderUserId);
+    await this.gmailService.sendMessage(gmail, {
+      to: candidate.email,
+      subject,
+      bodyText: body,
+    });
+  }
+
+  async bulkReject(
+    candidateIds: string[],
+    senderUserId: string,
+    subject: string,
+    body: string,
+  ): Promise<BulkRejectResult> {
+    const gmail = await this.buildSenderGmailClient(senderUserId);
+    const result: BulkRejectResult = { sent: [], failed: [] };
+
+    for (const candidateId of candidateIds) {
+      try {
+        const candidate = await this.findByIdOrThrow(candidateId);
+        await this.gmailService.sendMessage(gmail, {
+          to: candidate.email,
+          subject,
+          bodyText: body,
+        });
+        await this.updateStatus(candidateId, CandidateStatus.REJECTED);
+        result.sent.push(candidateId);
+      } catch {
+        result.failed.push(candidateId);
+      }
+    }
+
+    return result;
+  }
+
+  private async buildSenderGmailClient(
+    userId: string,
+  ): Promise<gmail_v1.Gmail> {
+    const user = await this.usersService.findById(userId);
+    if (!user?.googleRefreshToken) {
+      throw new BadRequestException(
+        'Connect a Gmail account before sending email.',
+      );
+    }
+    return this.gmailService.buildClient(user.googleRefreshToken);
   }
 }

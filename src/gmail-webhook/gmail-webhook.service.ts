@@ -227,6 +227,10 @@ export class GmailWebhookService {
       description: jobPosition.description,
       requiredSkills: jobPosition.requiredSkills,
       preferredSkills: jobPosition.preferredSkills,
+      skillsWeight: jobPosition.skillsWeight,
+      experienceWeight: jobPosition.experienceWeight,
+      educationWeight: jobPosition.educationWeight,
+      customPromptTemplate: jobPosition.customPromptTemplate,
     });
 
     if (scoreResult) {
@@ -239,6 +243,7 @@ export class GmailWebhookService {
         matchingSkills: scoreResult.matchingSkills,
         missingSkills: scoreResult.missingSkills,
         summaryText: scoreResult.summaryText,
+        scoreBreakdown: scoreResult.scoreBreakdown ?? null,
       });
     } else {
       this.logger.warn(

@@ -9,6 +9,11 @@ export interface CreateCvAnalysis {
   matchingSkills: string[];
   missingSkills: string[];
   summaryText: string;
+  scoreBreakdown?: {
+    skillsScore: number;
+    experienceScore: number;
+    educationScore: number;
+  } | null;
 }
 
 @Injectable()

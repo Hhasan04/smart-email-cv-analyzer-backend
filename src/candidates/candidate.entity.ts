@@ -12,6 +12,12 @@ import { JobPosition } from '../job-positions/job-position.entity';
 import { CVAnalysis } from '../cv-analysis/cv-analysis.entity';
 import { EmailMetadata } from '../email-metadata/email-metadata.entity';
 
+export enum CandidateStatus {
+  PENDING_REVIEW = 'PENDING_REVIEW',
+  ACCEPTED = 'ACCEPTED',
+  REJECTED = 'REJECTED',
+}
+
 @Entity('candidates')
 export class Candidate {
   @PrimaryGeneratedColumn('uuid')
@@ -34,6 +40,13 @@ export class Candidate {
 
   @Column({ type: 'varchar', nullable: true })
   resumeFileName: string | null;
+
+  @Column({
+    type: 'enum',
+    enum: CandidateStatus,
+    default: CandidateStatus.PENDING_REVIEW,
+  })
+  status: CandidateStatus;
 
   @Column({ type: 'varchar', nullable: true })
   jobPositionId: string | null;

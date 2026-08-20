@@ -32,6 +32,13 @@ export class CVAnalysis {
   @Column({ type: 'text' })
   summaryText!: string;
 
+  @Column({ type: 'json', nullable: true })
+  scoreBreakdown!: {
+    skillsScore: number;
+    experienceScore: number;
+    educationScore: number;
+  } | null;
+
   @CreateDateColumn()
   createdAt!: Date;
 }

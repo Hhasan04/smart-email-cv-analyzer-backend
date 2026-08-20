@@ -26,6 +26,18 @@ export class JobPosition {
   @Column({ default: true })
   isActive!: boolean;
 
+  @Column({ type: 'int', default: 50 })
+  skillsWeight!: number;
+
+  @Column({ type: 'int', default: 30 })
+  experienceWeight!: number;
+
+  @Column({ type: 'int', default: 20 })
+  educationWeight!: number;
+
+  @Column({ type: 'text', nullable: true })
+  customPromptTemplate!: string | null;
+
   @CreateDateColumn()
   createdAt!: Date;
 

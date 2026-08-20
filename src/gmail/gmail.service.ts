@@ -123,4 +123,24 @@ export class GmailService {
       },
     });
   }
+
+  async sendMessage(
+    gmail: gmail_v1.Gmail,
+    message: { to: string; subject: string; bodyText: string },
+  ): Promise<void> {
+    const headerLines = [
+      `To: ${message.to}`,
+      `Subject: ${message.subject}`,
+      'Content-Type: text/plain; charset="UTF-8"',
+    ];
+
+    const raw = [...headerLines, '', message.bodyText].join('\r\n');
+
+    await gmail.users.messages.send({
+      userId: 'me',
+      requestBody: {
+        raw: Buffer.from(raw, 'utf-8').toString('base64url'),
+      },
+    });
+  }
 }

@@ -19,6 +19,8 @@ import { GmailModule } from './gmail/gmail.module';
 import { GmailWebhookModule } from './gmail-webhook/gmail-webhook.module';
 import { PdfParserModule } from './pdf-parser/pdf-parser.module';
 import { GeminiModule } from './gemini/gemini.module';
+import { EmailTemplate } from './email-templates/email-template.entity';
+import { EmailTemplatesModule } from './email-templates/email-templates.module';
 
 @Module({
   imports: [
@@ -34,7 +36,14 @@ import { GeminiModule } from './gemini/gemini.module';
         username: configService.getOrThrow<string>('DB_USERNAME'),
         password: configService.getOrThrow<string>('DB_PASSWORD'),
         database: configService.getOrThrow<string>('DB_DATABASE'),
-        entities: [User, JobPosition, Candidate, EmailMetadata, CVAnalysis],
+        entities: [
+          User,
+          JobPosition,
+          Candidate,
+          EmailMetadata,
+          CVAnalysis,
+          EmailTemplate,
+        ],
         synchronize: true,
       }),
     }),
@@ -48,6 +57,7 @@ import { GeminiModule } from './gemini/gemini.module';
     GmailWebhookModule,
     PdfParserModule,
     GeminiModule,
+    EmailTemplatesModule,
   ],
   controllers: [AppController],
   providers: [AppService],
